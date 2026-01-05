@@ -26,7 +26,7 @@ from src.schemas.sales_schema import (
 from src.utils.custom_errors import AppError
 from src.utils.fetcher import Fetch, Fetcher
 
-
+# part one 
 def create_transaction(input_data: TransactionInputSchema, db: Session):
     record = Transactions(
         **input_data.model_dump(), transaction_number=generate_transaction_number(db)
@@ -34,6 +34,7 @@ def create_transaction(input_data: TransactionInputSchema, db: Session):
     db.add(record)
     return record
 
+# the part two 
 
 def create_sales_item(input_data: SalesItem, db: Session):
     record = SalesItem(**input_data.model_dump())
