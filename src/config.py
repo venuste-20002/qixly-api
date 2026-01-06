@@ -25,8 +25,12 @@ class Settings(BaseSettings):
 
     SUPER_PRIVATE_KEY: str
     PAYMENT_CALLBACK_URL: str
-    MTN_API_PUSH: str
-    AIRTEL_API_PUSH: str
+    MTN_API_PUSH: str = ""  # No longer used - kept for compatibility
+    AIRTEL_API_PUSH: str = ""  # No longer used - kept for compatibility
+    PAYPACK_CLIENT_ID: str
+    PAYPACK_CLIENT_SECRET: str
+    PAYPACK_BASE_URL: str
+    PAYPACK_WEBHOOK_SECRET: str
 
     SMS_API_KEY_PUSH:str
     SMS_API_URL:str

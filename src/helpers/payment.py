@@ -2,9 +2,8 @@ import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Union
-import secrets
 
-import requests
+import requests 
 from fastapi import status
 from pydantic import BaseModel
 from sqlmodel import Field, Session, SQLModel, select
@@ -16,6 +15,21 @@ from src.models.cart_model import Cart, CartItem, CartStatus
 from src.models.sales_model import SalesItem
 from src.models.transaction_model import Transactions, TransactionStatus
 from src.utils.custom_errors import AppError
+
+
+def get_paypack_access_token():
+    """Get access token from Paypack API."""
+    auth_url = f"{settings.PAYPACK_BASE_URL}/auth/agents/authorize"
+    response = requests.post(
+        auth_url,
+        json={
+            "client_id": settings.PAYPACK_CLIENT_ID,
+            "client_secret": settings.PAYPACK_CLIENT_SECRET,
+        },
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["access"]
 
 
 def get_sales_number(number: int, base: int = 36, padding: int = 0):
@@ -38,7 +52,8 @@ def get_sales_number(number: int, base: int = 36, padding: int = 0):
 
 
 class PaymentPushCallback(str, Enum):
-    PAYPACK_BASE_URL = "https://payments.paypack.rw/api"
+    MTN_PUSH = settings.MTN_API_PUSH
+    AIRTEL_PUSH = settings.AIRTEL_API_PUSH
 
     def __str__(self):
         return self.value
@@ -52,29 +67,44 @@ class PaymentPushSchema(SQLModel):
     callback_url: str = settings.PAYMENT_CALLBACK_URL
 
 
-class PaypackPaymentSchema(PaymentPushSchema):
-    idempotency_key: Optional[str] = None
+class MomoPaymentSchema(PaymentPushSchema):
+    payee_note: Optional[str] = Field(
+        default="Payment for goods",
+    )
+    payer_note: Optional[str] = Field(
+        default="Payment for goods",
+    )
+
+
+class AirtelPaymentSchema(PaymentPushSchema):
+    pass
+
+
+class PaypackCashinSchema(SQLModel):
+    amount: int
+    phone: str
+    reference: str
+    reason: Optional[str] = Field(default="Payment for goods")
 
 
 class PaymentService(str, Enum):
-    # Paypack handles both MTN and Airtel
-    MOBILE_MONEY = "mobile_money"
+    PAYPACK = "paypack"
 
 
 class PaymentController:
     def __init__(
         self,
         payment_service: PaymentService,
-        input_data: PaypackPaymentSchema,
+        input_data: PaypackCashinSchema,
     ):
         self.payment_service = payment_service
         self.input_data = input_data
 
     def __call__(self):
         match self.payment_service:
-            case PaymentService.MOBILE_MONEY:
-                self.validate_input_data(PaypackPaymentSchema)
-                return self.paypack_payment()
+            case PaymentService.PAYPACK:
+                self.validate_input_data(PaypackCashinSchema)
+                return self.paypack_cashin()
 
     def validate_input_data(self, expected_data: type):
         if not isinstance(self.input_data, expected_data):
@@ -83,77 +113,54 @@ class PaymentController:
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-    def paypack_payment(self):
-        """Handle Paypack cashin (deposit) payment - supports both MTN and Airtel"""
-        data = PaypackPaymentSchema(**self.input_data.model_dump())
-        
-        # Generate idempotency key if not provided
-        idempotency_key = data.idempotency_key or secrets.token_hex(16)
-        
-        # Prepare headers
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': f'Bearer {settings.PAYPACK_ACCESS_TOKEN}',
-            'Idempotency-Key': idempotency_key
-        }
-        
-        # Prepare payload for Paypack API
-        payload = {
-            "amount": data.amount,
-            "number": data.phone_number
-        }
-        
-        try:
-            # Make cashin request to Paypack
-            push_payment = requests.post(
-                url=f"{PaymentPushCallback.PAYPACK_BASE_URL}/transactions/cashin",
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-            push_payment.raise_for_status()
-            
-            response_data = push_payment.json()
-            
-            # Return in consistent format
-            return {
-                "status": "success",
-                "transaction_ref": response_data.get("ref"),
-                "amount": response_data.get("amount"),
-                "kind": response_data.get("kind"),
-                "payment_status": response_data.get("status"),
-                "created_at": response_data.get("created_at"),
-                "app_transaction_id": data.app_transaction_id,
-                "reference": data.reference,
-                "phone_number": data.phone_number
-            }
-            
-        except requests.exceptions.RequestException as e:
-            raise AppError(
-                detail=f"Payment failed: {str(e)}",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    def paypack_cashin(self):
+        data = PaypackCashinSchema(**self.input_data.model_dump())
+        token = get_paypack_access_token()
+        cashin_url = f"{settings.PAYPACK_BASE_URL}/transactions/cashin"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(
+            cashin_url,
+            headers=headers,
+            json=data.model_dump(),
+        )
+        return response.json()
 
 
 class PaymentSchemaPush(BaseModel):
     amount: int
     reference: str
+    network: str
     phone_number: str
     app_transaction_id: str
 
 
-def create_payment(input_data: PaymentSchemaPush):
-    """
-    Create a mobile money payment using Paypack.
-    Paypack automatically detects if it's MTN or Airtel based on phone number.
-    """
-    payment_push = PaymentController(
-        payment_service=PaymentService.MOBILE_MONEY,
-        input_data=PaypackPaymentSchema(**input_data.model_dump()),
-    )
-    data = payment_push()
-    return data
+def create_payment(
+    input_data: PaymentSchemaPush,
+):
+    match input_data.network:
+        case PaymentService.MTN_RWANDA:
+            payment_push = PaymentController(
+                payment_service=input_data.network,
+                input_data=MomoPaymentSchema(**input_data.model_dump()),
+            )
+            data = payment_push()
+            return data
+
+        case PaymentService.AIRTEL_RWANDA:
+            payment_push = PaymentController(
+                payment_service=input_data.network,
+                input_data=AirtelPaymentSchema(**input_data.model_dump()),
+            )
+            data = payment_push()
+            return data
+
+        case PaymentService.PAYPACK:
+            payment_push = PaymentController(
+                payment_service=input_data.network,
+                input_data=PaypackCashinSchema(**input_data.model_dump()),
+            )
+            data = payment_push()
+            return data
 
 
 class PaymentTransactionCallbackSchema(SQLModel):
@@ -163,6 +170,19 @@ class PaymentTransactionCallbackSchema(SQLModel):
     payment_channel: str
     transaction_time: datetime
     channel_transaction_id: str
+
+
+class PaypackCallbackData(SQLModel):
+    ref: str
+    amount: int
+    fee: int
+    client: str
+    timestamp: str
+
+
+class PaypackCallbackSchema(SQLModel):
+    event: str
+    data: PaypackCallbackData
 
 
 def payment_callback_controller(
@@ -228,75 +248,58 @@ def payment_callback_controller(
     return tx_data
 
 
+def paypack_callback_controller(
+    callback: PaypackCallbackSchema, db: Session, signature: str = None
+):
+    """Handle Paypack webhook callback."""
+    # Optional: Verify webhook signature if signature is provided
+    if signature and settings.PAYPACK_WEBHOOK_SECRET:
+        import hmac
+        import hashlib
+        expected_signature = hmac.new(
+            settings.PAYPACK_WEBHOOK_SECRET.encode(),
+            callback.model_dump_json().encode(),
+            hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected_signature):
+            raise AppError(detail="Invalid signature", status_code=status.HTTP_401_UNAUTHORIZED)
+
+    # Extract transaction_id from ref (assuming ref is the app_transaction_id)
+    transaction_id = callback.data.ref
+
+    # Determine status from event
+    if callback.event == "cashin:success":
+        tx_status = TransactionStatus.SUCCESS
+    elif callback.event == "cashin:failed":
+        tx_status = TransactionStatus.FAILED
+    else:
+        # Unknown event, perhaps log and return
+        return {"status": "unknown event"}
+
+    # Create a PaymentTransactionCallbackSchema-like object
+    transaction = PaymentTransactionCallbackSchema(
+        transaction_id=transaction_id,
+        tx_status=tx_status,
+        payment_channel="paypack",
+        transaction_time=datetime.fromisoformat(callback.data.timestamp.replace('Z', '+00:00')),
+        channel_transaction_id=callback.data.client,  # or some other identifier
+    )
+
+    return payment_callback_controller(transaction, db)
+
+
 class NetworkRegexSchema(Enum):
-    # Paypack automatically detects MTN or Airtel
-    mtn = ["^250(78|79)[0-9]{7}$"]
-    airtel = ["^250(72|73)[0-9]{7}$"]
+    paypack = ["^250(72|73|78|79)[0-9]{7}$"]
 
-
-def validate_phone_number(phone_number: str) -> str:
-    """
-    Validate Rwanda phone number format.
-    Returns formatted phone number (with 250 prefix).
-    Paypack will automatically route to MTN or Airtel.
-    """
-    # Add country code if not present
+def phone_network_action(phone_number: str):
     if phone_number.startswith("07"):
         phone_number = f"250{phone_number}"
-    
-    # Check if it's a valid Rwanda mobile number
-    is_valid = False
     for network in NetworkRegexSchema:
         for regex in network.value:
             if re.match(regex, phone_number):
-                is_valid = True
-                break
-        if is_valid:
-            break
-    
-    if not is_valid:
-        raise AppError(
-            detail="Invalid Rwanda phone number. Use format 078xxxxxxx or 072xxxxxxx",
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-    
-    return phone_number
+                return str(network.name)
 
-
-def get_paypack_transaction_status(transaction_ref: str):
-    """
-    Check transaction status from Paypack using the transaction reference.
-    Use this to verify payment status.
-    """
-    headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {settings.PAYPACK_ACCESS_TOKEN}'
-    }
-    
-    try:
-        response = requests.get(
-            url=f"{PaymentPushCallback.PAYPACK_BASE_URL}/transactions/find/{transaction_ref}",
-            headers=headers,
-            timeout=30
-        )
-        response.raise_for_status()
-        
-        transaction_data = response.json()
-        
-        return {
-            "ref": transaction_data.get("ref"),
-            "amount": transaction_data.get("amount"),
-            "client": transaction_data.get("client"),
-            "fee": transaction_data.get("fee"),
-            "kind": transaction_data.get("kind"),
-            "merchant": transaction_data.get("merchant"),
-            "status": transaction_data.get("status"),
-            "timestamp": transaction_data.get("timestamp")
-        }
-        
-    except requests.exceptions.RequestException as e:
-        raise AppError(
-            detail=f"Failed to retrieve transaction status: {str(e)}",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    raise AppError(
+        detail="Invalid phone number",
+        status_code=status.HTTP_400_BAD_REQUEST,
+    )
