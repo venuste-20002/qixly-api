@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     AIRTEL_API_PUSH: str = ""  # No longer used - kept for compatibility
     PAYPACK_CLIENT_ID: str
     PAYPACK_CLIENT_SECRET: str
-    PAYPACK_BASE_URL: str
+    PAYPACK_BASE_URL: str 
     PAYPACK_WEBHOOK_SECRET: str
 
     SMS_API_KEY_PUSH:str

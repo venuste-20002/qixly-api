@@ -137,30 +137,20 @@ class PaymentSchemaPush(BaseModel):
 def create_payment(
     input_data: PaymentSchemaPush,
 ):
-    match input_data.network:
-        case PaymentService.MTN_RWANDA:
-            payment_push = PaymentController(
-                payment_service=input_data.network,
-                input_data=MomoPaymentSchema(**input_data.model_dump()),
-            )
-            data = payment_push()
-            return data
-
-        case PaymentService.AIRTEL_RWANDA:
-            payment_push = PaymentController(
-                payment_service=input_data.network,
-                input_data=AirtelPaymentSchema(**input_data.model_dump()),
-            )
-            data = payment_push()
-            return data
-
-        case PaymentService.PAYPACK:
-            payment_push = PaymentController(
-                payment_service=input_data.network,
-                input_data=PaypackCashinSchema(**input_data.model_dump()),
-            )
-            data = payment_push()
-            return data
+    # Since we now only support Paypack, always use PAYPACK
+    # Map phone_number to phone for PaypackCashinSchema
+    paypack_data = PaypackCashinSchema(
+        amount=input_data.amount,
+        phone=input_data.phone_number,
+        reference=input_data.reference,
+        reason="Payment for goods"
+    )
+    payment_push = PaymentController(
+        payment_service=PaymentService.PAYPACK,
+        input_data=paypack_data,
+    )
+    data = payment_push()
+    return data
 
 
 class PaymentTransactionCallbackSchema(SQLModel):
@@ -294,10 +284,9 @@ class NetworkRegexSchema(Enum):
 def phone_network_action(phone_number: str):
     if phone_number.startswith("07"):
         phone_number = f"250{phone_number}"
-    for network in NetworkRegexSchema:
-        for regex in network.value:
-            if re.match(regex, phone_number):
-                return str(network.name)
+    # Since we now only support Paypack for all Rwandan numbers
+    if re.match(r"^250(72|73|78|79)[0-9]{7}$", phone_number):
+        return "paypack"
 
     raise AppError(
         detail="Invalid phone number",
