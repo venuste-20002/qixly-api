@@ -265,7 +265,17 @@ def create_sales_from_cart_controller(
 
     db.commit()
 
-    return payment
+    # Return transaction and cart information since sales items are created via webhook
+    return {
+        "payment_response": payment,
+        "transaction_id": str(transaction.id),
+        "cart_id": str(cart.id),
+        "total_amount": total_final_amount,
+        "phone_number": str(input_data.phone_number or user_id["phone"]),
+        "network": phone_network,
+        "status": "pending",  # Payment is initiated, awaiting confirmation
+        "message": "Payment initiated successfully. Sales items will be created upon payment confirmation."
+    }
 
 
 async def view_sale(sales_item_id: UUID, database: Session):
