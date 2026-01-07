@@ -19,17 +19,29 @@ from src.utils.custom_errors import AppError
 
 def get_paypack_access_token():
     """Get access token from Paypack API."""
-    auth_url = f"{settings.PAYPACK_BASE_URL}/auth/agents/authorize"
-    response = requests.post(
-        auth_url,
-        json={
-            "client_id": settings.PAYPACK_CLIENT_ID,
-            "client_secret": settings.PAYPACK_CLIENT_SECRET,
-        },
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data["access"]
+    try:
+        auth_url = f"{settings.PAYPACK_BASE_URL}/auth/agents/authorize"
+        response = requests.post(
+            auth_url,
+            json={
+                "client_id": settings.PAYPACK_CLIENT_ID,
+                "client_secret": settings.PAYPACK_CLIENT_SECRET,
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["access"]
+    except requests.exceptions.RequestException as e:
+        raise AppError(
+            detail=f"Failed to authenticate with Paypack: {str(e)}",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+    except Exception as e:
+        raise AppError(
+            detail=f"Authentication error: {str(e)}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 def get_sales_number(number: int, base: int = 36, padding: int = 0):
@@ -82,7 +94,7 @@ class AirtelPaymentSchema(PaymentPushSchema):
 
 class PaypackCashinSchema(SQLModel):
     amount: int
-    phone: str
+    number: str
     reference: str
     reason: Optional[str] = Field(default="Payment for goods")
 
@@ -138,13 +150,14 @@ def create_payment(
     input_data: PaymentSchemaPush,
 ):
     # Since we now only support Paypack, always use PAYPACK
-    # Map phone_number to phone for PaypackCashinSchema
+    # Map phone_number to number for PaypackCashinSchema
     paypack_data = PaypackCashinSchema(
         amount=input_data.amount,
-        phone=input_data.phone_number,
+        number=input_data.phone_number,
         reference=input_data.reference,
         reason="Payment for goods"
     )
+
     payment_push = PaymentController(
         payment_service=PaymentService.PAYPACK,
         input_data=paypack_data,

@@ -253,6 +253,7 @@ def create_sales_from_cart_controller(
         ),
         db=db,
     )
+
     payment = create_payment(
         input_data=PaymentSchemaPush(
             amount=total_final_amount,
