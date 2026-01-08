@@ -20,7 +20,8 @@ from src.utils.custom_errors import AppError
 def get_paypack_access_token():
     """Get access token from Paypack API."""
     try:
-        auth_url = f"{settings.PAYPACK_BASE_URL}/auth/agents/authorize"
+        base_url = "https://payments.paypack.rw/api"
+        auth_url = f"{base_url}/auth/agents/authorize"
         response = requests.post(
             auth_url,
             json={
@@ -128,7 +129,8 @@ class PaymentController:
     def paypack_cashin(self):
         data = PaypackCashinSchema(**self.input_data.model_dump())
         token = get_paypack_access_token()
-        cashin_url = f"{settings.PAYPACK_BASE_URL}/transactions/cashin"
+        base_url = "https://payments.paypack.rw/api"
+        cashin_url = f"{base_url}/transactions/cashin"
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.post(
             cashin_url,
@@ -149,8 +151,6 @@ class PaymentSchemaPush(BaseModel):
 def create_payment(
     input_data: PaymentSchemaPush,
 ):
-    # Since we now only support Paypack, always use PAYPACK
-    # Map phone_number to number for PaypackCashinSchema
     paypack_data = PaypackCashinSchema(
         amount=input_data.amount,
         number=input_data.phone_number,
@@ -168,7 +168,6 @@ def create_payment(
 
 class PaymentTransactionCallbackSchema(SQLModel):
     transaction_id: str
-    # transaction_number: str
     tx_status: TransactionStatus
     payment_channel: str
     transaction_time: datetime
@@ -255,7 +254,6 @@ def paypack_callback_controller(
     callback: PaypackCallbackSchema, db: Session, signature: str = None
 ):
     """Handle Paypack webhook callback."""
-    # Optional: Verify webhook signature if signature is provided
     if signature and settings.PAYPACK_WEBHOOK_SECRET:
         import hmac
         import hashlib
@@ -267,25 +265,19 @@ def paypack_callback_controller(
         if not hmac.compare_digest(signature, expected_signature):
             raise AppError(detail="Invalid signature", status_code=status.HTTP_401_UNAUTHORIZED)
 
-    # Extract transaction_id from ref (assuming ref is the app_transaction_id)
     transaction_id = callback.data.ref
-
-    # Determine status from event
     if callback.event == "cashin:success":
         tx_status = TransactionStatus.SUCCESS
     elif callback.event == "cashin:failed":
         tx_status = TransactionStatus.FAILED
     else:
-        # Unknown event, perhaps log and return
         return {"status": "unknown event"}
-
-    # Create a PaymentTransactionCallbackSchema-like object
     transaction = PaymentTransactionCallbackSchema(
         transaction_id=transaction_id,
         tx_status=tx_status,
         payment_channel="paypack",
         transaction_time=datetime.fromisoformat(callback.data.timestamp.replace('Z', '+00:00')),
-        channel_transaction_id=callback.data.client,  # or some other identifier
+        channel_transaction_id=callback.data.client,
     )
 
     return payment_callback_controller(transaction, db)
@@ -297,7 +289,6 @@ class NetworkRegexSchema(Enum):
 def phone_network_action(phone_number: str):
     if phone_number.startswith("07"):
         phone_number = f"250{phone_number}"
-    # Since we now only support Paypack for all Rwandan numbers
     if re.match(r"^250(72|73|78|79)[0-9]{7}$", phone_number):
         return "paypack"
 
