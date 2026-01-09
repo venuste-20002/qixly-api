@@ -28,6 +28,7 @@ from src.routes import (
     institution_branch_router,
     institution_members_router,
     institution_router,
+    payment_router,
     permission_router,
     review_router,
     roles_router,
@@ -111,6 +112,7 @@ routes = [
     free_routers.router,
     transaction_router.router,
     review_router.router,
+    payment_router.router,
 ]
 
 for route in routes:

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     PAYPACK_CLIENT_SECRET: str
     PAYPACK_BASE_URL: str 
     PAYPACK_WEBHOOK_SECRET: str
+    PAYPACK_WEBHOOK_MODE: str = "development"  # or "production"
 
     SMS_API_KEY_PUSH:str
     SMS_API_URL:str
