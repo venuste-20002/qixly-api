@@ -29,11 +29,10 @@ def create_requests_session():
     """
     session = requests.Session()
     
-    # Configure retry strategy
     retry_strategy = Retry(
-        total=3,  # Total number of retries
-        backoff_factor=1,  # Wait 1, 2, 4 seconds between retries
-        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
+        total=3, 
+        backoff_factor=1, 
+        status_forcelist=[429, 500, 502, 503, 504], 
         allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
     )
     
@@ -156,8 +155,6 @@ class PaymentController:
     def paypack_cashin(self):
         """Initiate a Paypack cashin transaction."""
         data = PaypackCashinSchema(**self.input_data.model_dump())
-        
-        # Validate phone number format before sending
         try:
             validated_number = normalize_phone_number(data.number)
             data.number = validated_number
@@ -172,7 +169,7 @@ class PaymentController:
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': f"Bearer {token}",
-            'X-Webhook-Mode': settings.PAYPACK_WEBHOOK_MODE  # 'development' or 'production'
+            'X-Webhook-Mode': settings.PAYPACK_WEBHOOK_MODE  
         }
         
         payload = data.model_dump()
@@ -228,7 +225,6 @@ class PaymentSchemaPush(BaseModel):
 
 def create_payment(input_data: PaymentSchemaPush):
     """Create a payment transaction."""
-    # Normalize phone number for Paypack (must be 07XXXXXXXX format)
     try:
         phone_number = normalize_phone_number(input_data.phone_number)
     except AppError:
@@ -269,9 +265,9 @@ class PaypackCallbackData(SQLModel):
     client: str
     merchant: str
     timestamp: str
-    status: Optional[str] = None  # For processed events
-    kind: Optional[str] = None  # CASHIN or CASHOUT
-    provider: Optional[str] = None  # e.g., 'mtn'
+    status: Optional[str] = None 
+    kind: Optional[str] = None  
+    provider: Optional[str] = None  
     created_at: Optional[str] = None
     processed_at: Optional[str] = None
 
@@ -279,7 +275,7 @@ class PaypackCallbackData(SQLModel):
 class PaypackCallbackSchema(SQLModel):
     """Schema for Paypack webhook callback."""
     event_id: str
-    kind: str  # event kind: transaction:created or transaction:processed
+    kind: str  
     created_at: str
     data: PaypackCallbackData
 
@@ -299,19 +295,13 @@ def verify_paypack_signature(payload: str, signature: str, secret: str) -> bool:
     if not secret or not signature:
         return False
     
-    # Calculate HMAC SHA256 hash
     hash_digest = hmac.new(
         secret.encode('utf-8'),
         payload.encode('utf-8'),
         hashlib.sha256
     ).digest()
-    
-    # Convert to base64
     expected_signature = base64.b64encode(hash_digest).decode()
-    
-    # Compare signatures
     return hmac.compare_digest(signature, expected_signature)
-
 
 def payment_callback_controller(
     transaction: PaymentTransactionCallbackSchema, 
@@ -319,7 +309,6 @@ def payment_callback_controller(
 ):
     """Process payment callback and update database."""
     
-    # Find pending transaction
     tx_data = db.exec(
         select(Transactions)
         .where(Transactions.id == transaction.transaction_id)
@@ -331,8 +320,6 @@ def payment_callback_controller(
             detail="Transaction not found or already processed",
             status_code=status.HTTP_404_NOT_FOUND,
         )
-
-    # Get cart and related data
     s_data = db.exec(
         select(Cart, CartItem, CardVariant)
         .join(CartItem, CartItem.cart_id == Cart.id, isouter=True)
@@ -347,12 +334,8 @@ def payment_callback_controller(
     if transaction.tx_status == TransactionStatus.SUCCESS.value:
         for data in s_data:
             cart, cart_item, card_variant = data
-            
-            # Update quantities and cart status
             card_variant.pending_quantity -= cart_item.quantity
             cart.status = CartStatus.completed.value
-
-            # Generate sales items
             for _ in range(cart_item.quantity):
                 sales_number_sequence = generate_sales_item_number(db)
                 sales_number = get_sales_number(int(sales_number_sequence))
@@ -371,13 +354,10 @@ def payment_callback_controller(
     elif transaction.tx_status == TransactionStatus.FAILED.value:
         for data in s_data:
             cart, cart_item, card_variant = data
-
-            # Restore quantities and mark cart as failed
             cart.status = CartStatus.failed.value
             card_variant.pending_quantity -= cart_item.quantity
             card_variant.quantity += cart_item.quantity
 
-    # Update transaction
     tx_data_update = transaction.model_dump(exclude_unset=True)
     tx_data.sqlmodel_update(tx_data_update)
 
@@ -402,7 +382,6 @@ def paypack_callback_controller(
         raw_body: Raw request body for signature verification
         x_paypack_signature: Signature from x-paypack-signature header
     """
-    # Verify signature if secret is configured
     if settings.PAYPACK_WEBHOOK_SECRET and x_paypack_signature:
         if not raw_body:
             raise AppError(
@@ -423,27 +402,22 @@ def paypack_callback_controller(
             )
 
     transaction_id = callback.data.ref
-    
-    # Determine transaction status based on event kind
+
     if callback.kind == "transaction:processed":
-        # Check the status field in the data
         if callback.data.status == "successful":
             tx_status = TransactionStatus.SUCCESS
         else:
             tx_status = TransactionStatus.FAILED
     elif callback.kind == "transaction:created":
-        # Created events are pending
         tx_status = TransactionStatus.PENDING
     else:
         return {"status": "unknown event", "event": callback.kind}
 
-    # Parse timestamp (handle both formats)
     timestamp_str = callback.data.timestamp
     if timestamp_str.endswith('Z'):
         timestamp_str = timestamp_str.replace('Z', '+00:00')
     transaction_time = datetime.fromisoformat(timestamp_str)
 
-    # Create transaction callback schema
     transaction = PaymentTransactionCallbackSchema(
         transaction_id=transaction_id,
         tx_status=tx_status,
@@ -459,26 +433,43 @@ def normalize_phone_number(phone_number: str) -> str:
     """
     Normalize phone number to Paypack format (07XXXXXXXX).
     
+    Accepts formats:
+    - 0781234567 (10 digits with leading 0)
+    - 781234567 (9 digits without leading 0)
+    - 250781234567 (12 digits with country code, no leading 0 after code)
+    - 2500781234567 (13 digits with country code and leading 0)
+    - +250781234567 or +2500781234567
+    
     Args:
         phone_number: Phone number in various formats
     
     Returns:
-        Normalized phone number without country code
+        Normalized phone number in format 07XXXXXXXX
     
     Raises:
         AppError: If phone number format is invalid
     """
-    # Remove all spaces, dashes, and plus signs
-    phone = phone_number.strip().replace(" ", "").replace("-", "").replace("+", "")
+    phone = phone_number.strip().replace(" ", "").replace("-", "").replace("+", "").replace("(", "").replace(")", "")
     
-    # Remove country code if present
     if phone.startswith("250"):
-        phone = phone[3:]
+        phone = phone[3:]  
     
-    # Validate format (must be 07X XXXXXXX where X is 2,3,8,9)
-    if not re.match(r"^(072|073|078|079)\d{7}$", phone):
+    if len(phone) == 9 and phone[0] != "0":
+        phone = "0" + phone
+
+    if len(phone) != 10:
         raise AppError(
-            detail=f"Invalid phone number format. Must be MTN (078/079) or Airtel (072/073) Rwanda number. Got: {phone_number}",
+            detail=f"Invalid phone number length. Expected 10 digits (07XXXXXXXX), got {len(phone)} digits. Input: {phone_number}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if not phone.startswith(("072", "073", "078", "079")):
+        raise AppError(
+            detail=f"Invalid phone number prefix. Must start with 072 (Airtel), 073 (Airtel), 078 (MTN), or 079 (MTN). Got: {phone[:3]} from input: {phone_number}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if not phone.isdigit():
+        raise AppError(
+            detail=f"Phone number must contain only digits. Got: {phone_number}",
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     
@@ -498,10 +489,7 @@ def phone_network_action(phone_number: str) -> str:
     Raises:
         AppError: If phone number is invalid
     """
-    # Normalize and validate the phone number
     normalized = normalize_phone_number(phone_number)
-    
-    # Check which provider
     if normalized.startswith("078") or normalized.startswith("079"):
         provider = "MTN Rwanda"
     elif normalized.startswith("072") or normalized.startswith("073"):
