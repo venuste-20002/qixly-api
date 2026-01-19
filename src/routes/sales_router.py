@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from src.controllers.sales_controller import (
     create_sales_from_cart_controller,
     create_variant_sale_controller,
-    get_all_sales_items_controller
+    get_all_sales_items_controller,
+    get_single_sale_item
 )
 from src.database import database
 from src.helpers.paginator import (
