@@ -39,7 +39,6 @@ async def Shared_card_item(
 
     background.add_task(Mailer(email).share_email, qr_base64, salesitem.cost_variant)
 
-    # await Mailer(email).share_email(qr_base64, salesitem.cost_variant)
     db.add(shared)
     db.commit()
     db.refresh(shared)
@@ -47,7 +46,7 @@ async def Shared_card_item(
     return SharedResponse(**shared.model_dump())
 
 
-# function of get shared by id
+
 
 
 async def get_shared_by_id_controler(shared_id: UUID, db: Session) -> SharedResponse:

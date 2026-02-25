@@ -29,7 +29,6 @@ class UsersController:
         self.database = database
         self.uuid = uuid
 
-    # Gets the user details
     async def get_user(self):
         get_current_user = await Fetch(
             Users, "id", self.uuid, self.database
@@ -40,7 +39,6 @@ class UsersController:
 
         return get_current_user
 
-    # Gets the user scope before adding a new scope
     async def get_user_scopes(self) -> List[GetUserScope]:
         await self.get_user()
         user_scopes = await Fetch(
@@ -65,7 +63,7 @@ class UsersController:
             for data in user_scopes or []
         ]
 
-    # Gets the Role id of the role name
+
     async def get_role(self, role_code: int):
         get_current_role = await Fetch(
             Roles, "code", role_code, self.database

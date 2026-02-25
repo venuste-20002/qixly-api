@@ -74,8 +74,6 @@ async def get_transaction_controller(
         ],
     )
 
-
-# function of get the single transaction
 async def get_single_transaction_controller(
     transaction_id: UUID, db: Session
 ) -> TransactionSingleSchema:
