@@ -25,16 +25,13 @@ from src.schemas.sales_schema import (
 )
 from src.utils.custom_errors import AppError
 from src.utils.fetcher import Fetch, Fetcher
-
-# part one 
+ 
 def create_transaction(input_data: TransactionInputSchema, db: Session):
     record = Transactions(
         **input_data.model_dump(), transaction_number=generate_transaction_number(db)
     )
     db.add(record)
     return record
-
-# the part two 
 
 def create_sales_item(input_data: SalesItem, db: Session):
     record = SalesItem(**input_data.model_dump())
@@ -266,7 +263,7 @@ def create_sales_from_cart_controller(
 
     db.commit()
 
-    # Return transaction and cart information since sales items are created via webhook
+
     return {
         "payment_response": payment,
         "transaction_id": str(transaction.id),
@@ -274,7 +271,7 @@ def create_sales_from_cart_controller(
         "total_amount": total_final_amount,
         "phone_number": str(input_data.phone_number or user_id["phone"]),
         "network": phone_network,
-        "status": "pending",  # Payment is initiated, awaiting confirmation
+        "status": "pending",  
         "message": "Payment initiated successfully. Sales items will be created upon payment confirmation."
     }
 
